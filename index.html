@@ -1,0 +1,207 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>SueñoSeguro · Monitoreo de apnea</title>
+<style>
+:root{--bg:#eef1f9;--card:#fff;--tx:#1b2236;--mut:#56607a;--pri:#3b3fd1;--pt:#fff;--ok:#146c43;--okb:#dcf5e8;--wn:#7c4a03;--wnb:#fff0cf;--of:#4b5262;--ofb:#e4e7ee;--bd:#dfe3ee;--h1:#3b3fd1;--h2:#6a5cf0;--sh:0 8px 24px rgba(40,50,110,.10);--sig:#3b3fd1;
+box-sizing:border-box;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}
+@media(prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#0e1322;--card:#182038;--tx:#eef0f8;--mut:#aab3cc;--pri:#8f94ff;--pt:#0e1322;--ok:#8fe0b3;--okb:#17382a;--wn:#ffd88a;--wnb:#4a3811;--of:#c3c8d6;--ofb:#2a3250;--bd:#2a3352;--h1:#27307a;--h2:#4a3fa8;--sh:none;--sig:#9aa0ff;color-scheme:dark}}
+:root[data-theme="dark"]{--bg:#0e1322;--card:#182038;--tx:#eef0f8;--mut:#aab3cc;--pri:#8f94ff;--pt:#0e1322;--ok:#8fe0b3;--okb:#17382a;--wn:#ffd88a;--wnb:#4a3811;--of:#c3c8d6;--ofb:#2a3250;--bd:#2a3352;--h1:#27307a;--h2:#4a3fa8;--sh:none;--sig:#9aa0ff;color-scheme:dark}
+html{scroll-padding-top:env(safe-area-inset-top,0px)}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--tx);font:20px/1.5 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif}
+body::before{content:"";position:fixed;inset:0 0 auto;height:env(safe-area-inset-top,0px);background:var(--bg);z-index:10}
+main{max-width:720px;margin:0 auto;padding:0 16px 40px}
+header{position:sticky;top:env(safe-area-inset-top,0px);z-index:9;background:var(--bg);display:flex;align-items:center;gap:12px;padding:12px 0}
+header .who{flex:1;line-height:1.2}header b{font-size:1.1rem}
+h2{font-size:1.25rem;margin:0 0 .5em}
+.card{background:var(--card);border:1px solid var(--bd);border-radius:24px;padding:20px;margin:14px 0;box-shadow:var(--sh)}
+.hero{background:linear-gradient(135deg,var(--h1),var(--h2));color:#fff;border:0}
+.hero .mut{color:#e1e4ff}
+button,input,select{font:inherit}
+button{font-weight:700;min-height:56px;padding:10px 22px;border-radius:16px;border:0;background:var(--pri);color:var(--pt);cursor:pointer}
+button.sec{background:transparent;color:var(--pri);border:2px solid var(--pri)}
+button:focus-visible,input:focus-visible,select:focus-visible{outline:4px solid var(--wn);outline-offset:2px}
+input,select{width:100%;min-height:56px;padding:10px 16px;border-radius:16px;border:2px solid var(--bd);background:var(--bg);color:var(--tx);margin:6px 0 14px}
+label{font-weight:600}
+.tabs{display:flex;gap:6px;background:var(--card);border:1px solid var(--bd);border-radius:18px;padding:5px}
+.tabs button{flex:1;background:transparent;color:var(--mut);min-height:48px}
+.tabs button.on{background:var(--pri);color:var(--pt)}
+.pill{display:inline-block;padding:5px 14px;border-radius:999px;font-weight:700;font-size:.95rem}
+.ok{background:var(--okb);color:var(--ok)}.wn{background:var(--wnb);color:var(--wn)}.of{background:var(--ofb);color:var(--of)}
+.st{font-size:1.9rem;font-weight:800;line-height:1.2;margin:.3em 0}
+.mut{color:var(--mut);font-size:.95rem}
+.tag{font-size:.8rem;font-weight:700;border:1px solid currentColor;border-radius:8px;padding:1px 8px;opacity:.85}
+.alert{background:var(--wnb);color:var(--wn);border:2px solid var(--wn);border-radius:24px;padding:18px;margin:14px 0;animation:br 4s ease-in-out infinite}
+.alert b{font-size:1.35rem;display:block}.alert button{margin:10px 8px 0 0}
+@keyframes br{50%{opacity:.8}}
+@media(prefers-reduced-motion:reduce){.alert{animation:none}}
+.err{background:var(--wnb);color:var(--wn);border-radius:16px;padding:12px 16px;margin:10px 0;font-weight:600}
+svg{width:100%;height:auto;display:block}
+.wrap{overflow-x:auto}table{width:100%;border-collapse:collapse;font-size:1rem}th,td{text-align:left;padding:10px 6px;border-bottom:1px solid var(--bd)}
+.row{display:flex;align-items:center;gap:14px;width:100%;text-align:left;background:var(--card);color:var(--tx);border:1px solid var(--bd);border-radius:20px;padding:14px;margin:10px 0;box-shadow:var(--sh)}
+.row>div{flex:1}
+details{margin-top:18px}summary{cursor:pointer;font-weight:700;padding:8px 0}details button{min-height:46px;margin:4px 6px 4px 0;font-size:.95rem}
+</style>
+</head>
+<body>
+<main id="app"></main>
+<script src="config.js"></script>
+<script>
+/* ===== Configuración ===== */
+const CFG=Object.assign({MODE:"mock",            // "mock" = datos simulados | "live" = backend real
+ BASE:"http://192.168.1.10:8000",  // URL del servidor en la red local (solo modo live)
+ POLL_MS:2000,STALE_S:10},window.APP_CONFIG||{});         // actualización de pantalla y tiempo para marcar "sin conexión"
+/* Endpoints que usa el frontend (el ESP32 usa POST /api/ingest con X-Device-Id y X-Device-Key):
+ POST /api/auth/login · POST /api/auth/logout
+ GET  /api/patients                      (médico, admin)
+ GET  /api/patients/:id/latest           último dato + estado + ts + dispositivo
+ GET  /api/patients/:id/signal?since=seq bloques de ECG con seq y fs (orden y referencia temporal)
+ GET  /api/patients/:id/history          noches y eventos
+ POST /api/patients/:id/alert/ack        confirmar alerta
+ GET  /api/devices · POST /api/devices/:id/assign   (admin)
+ GET  /api/audit                         (admin) */
+
+const S={skew:0,tok:null,me:null,tab:"hoy",sel:null,err:"",lat:null,list:[],hist:null,devs:[],aud:[],u:"",sig:"",seq:0,tone:{n:0,t:0}};
+const buf=[];let audio=null,muted=false;
+const $=s=>document.querySelector(s),hm=t=>new Date(t).toLocaleTimeString("es-MX",{hour:"2-digit",minute:"2-digit",second:"2-digit"});
+const fresh=t=>(Date.now()+S.skew-t)/1000<CFG.STALE_S;
+
+/* ===== Capa de conexión ===== */
+async function api(m,p,b){
+ let r;
+ try{r=CFG.MODE==="mock"?await mock(m,p,b):await live(m,p,b)}catch(e){S.err="No se puede conectar con el servidor. Revise que el Wi-Fi esté activo.";throw e}
+ if(r.s===401&&S.tok){S.err="Su sesión terminó. Entre de nuevo.";out(true)}
+ else if(r.s===401)S.err="Usuario o contraseña incorrectos.";
+ else if(r.s===403)S.err="No tiene permiso para ver esta información.";
+ else if(r.s===404)S.err="No hay dispositivo asociado o no hay datos todavía.";
+ else if(r.s===409)S.err="Ese usuario ya tiene un dispositivo asociado.";
+ else if(r.s===422)S.err="El servidor rechazó datos no válidos.";
+ else if(r.s>=500)S.err="El servidor tuvo un problema. Intente en unos minutos.";
+ else if(r.s>=400)S.err="No se pudo completar la acción.";
+ else{S.err="";return r.d}
+ throw r}
+async function live(m,p,b){
+ const h={"Content-Type":"application/json"};if(S.tok)h.Authorization="Bearer "+S.tok;
+ const x=await fetch(CFG.BASE+p,{method:m,headers:h,body:b?JSON.stringify(b):undefined});
+ const sd=Date.parse(x.headers.get("Date")||"");if(sd)S.skew=sd-Date.now(); // compensa diferencia de reloj servidor/navegador
+ let d=null;try{d=await x.json()}catch(e){}return{s:x.status,d}}
+
+/* ===== Servidor simulado (reemplazado por el backend real en modo live) ===== */
+const T0=Date.now();
+const DB={u:{paciente1:{pw:"demo",id:1,name:"Rosa Medina",role:"paciente",tipo:"pre"},paciente2:{pw:"demo",id:2,name:"Don Aurelio Ramos",role:"paciente",tipo:"dx"},medico:{pw:"demo",id:3,name:"Dra. Elena Ortiz",role:"medico"},admin:{pw:"demo",id:4,name:"Administración",role:"admin"}},
+dev:[{id:"ESP32-A",user:1,on:true,ts:T0,st:"ok",bpm:68,ph:0,seq:0,sensor:"ECG + MAX1032"},{id:"ESP32-B",user:2,on:true,ts:T0,st:"ok",pos:"De lado",sensor:"Giroscopio + MAX1032"}],
+ev:[{p:2,t:T0-36e5,m:"Cambio de posición: boca abajo → de lado"},{p:1,t:T0-18e5,m:"Dispositivo reconectado"}],
+aud:[{t:T0-72e5,m:"Asociación ESP32-A → Rosa Medina"},{t:T0-5e5,m:"Rechazo: dispositivo ESP32-X sin credencial válida"}]};
+setInterval(()=>DB.dev.forEach(d=>{if(d.on)d.ts=Date.now()}),1000);
+const gs=(p,c,w)=>Math.exp(-((p-c)**2)/(2*w*w));
+const ecg=p=>.1*gs(p,.15,.025)-.12*gs(p,.27,.008)+gs(p,.30,.010)-.25*gs(p,.33,.010)+.25*gs(p,.55,.04);
+const mock=(m,p,b)=>new Promise(r=>setTimeout(()=>r(msrv(m,p,b)),60));
+function msrv(m,p,b){
+ const A=x=>DB.aud.unshift({t:Date.now(),m:x});
+ if(p==="/api/auth/login"){const u=DB.u[b.username];
+  if(!u||u.pw!==b.password){A("Rechazo: inicio de sesión inválido");return{s:401}}
+  A("Inicio de sesión: "+u.role);return{s:200,d:{token:"mock-"+u.id,user:{id:u.id,name:u.name,role:u.role,tipo:u.tipo}}}}
+ const me=Object.values(DB.u).find(x=>"mock-"+x.id===S.tok);if(!me)return{s:401};
+ if(p==="/api/auth/logout"){A("Cierre de sesión: "+me.role);return{s:200,d:{}}}
+ const dv=id=>DB.dev.find(d=>d.user===id);
+ let q;
+ if(q=p.match(/^\/api\/patients\/(\d+)\/(latest|signal|history|alert\/ack)/)){
+  const id=+q[1];if(me.role==="paciente"&&me.id!==id){A("Rechazo: acceso a datos ajenos (usuario "+me.id+")");return{s:403}}
+  const d=dv(id),u=Object.values(DB.u).find(x=>x.id===id);if(!d)return{s:404};
+  if(q[2]==="latest")return{s:200,d:{userId:id,deviceId:d.id,tipo:u.tipo,st:d.st,bpm:d.bpm,pos:d.pos,ts:d.ts,source:"simulado"}};
+  if(q[2]==="signal"){const s=[];if(d.on)for(let i=0;i<50;i++){d.ph=(d.ph+(d.bpm/60)/50)%1;s.push(+(ecg(d.ph)+(Math.random()-.5)*.03).toFixed(3))}
+   d.seq=(d.seq||0)+1;return{s:200,d:{fs:50,unit:"mV",seq:d.seq,samples:s}}}
+  if(q[2]==="history")return{s:200,d:{nights:[3,1,4,0,2,5,2],events:DB.ev.filter(e=>e.p===id).slice(0,10)}};
+  d.st="ok";DB.ev.unshift({p:id,t:Date.now(),m:"Alerta confirmada por el paciente"});return{s:200,d:{}}}
+ if(me.role==="paciente")return{s:403};
+ if(p==="/api/patients")return{s:200,d:Object.values(DB.u).filter(u=>u.role==="paciente").map(u=>{const d=dv(u.id)||{};return{id:u.id,name:u.name,tipo:u.tipo,deviceId:d.id,st:d.st,ts:d.ts||0}})};
+ if(me.role!=="admin")return{s:403};
+ if(p==="/api/devices")return{s:200,d:DB.dev.map(d=>({id:d.id,sensor:d.sensor,user:d.user,ts:d.ts}))};
+ if(q=p.match(/^\/api\/devices\/([\w-]+)\/assign/)){if(DB.dev.some(d=>d.user===b.userId&&d.id!==q[1]))return{s:409};
+  DB.dev.find(d=>d.id===q[1]).user=b.userId;A("Cambio de asociación: "+q[1]+" → usuario "+b.userId);return{s:200,d:{}}}
+ if(p==="/api/audit")return{s:200,d:DB.aud.slice(0,12)};
+ return{s:404}}
+function sim(id,a){const d=DB.dev.find(x=>x.id===id);
+ if(a==="alerta"){d.st="alerta";DB.ev.unshift({p:d.user,t:Date.now(),m:d.pos!==undefined?"ALERTA: boca arriba (giroscopio)":"ALERTA: posible pausa respiratoria (ECG)"});if(d.pos!==undefined)d.pos="Boca arriba";else d.bpm=54}
+ if(a==="ok"){d.st="ok";if(d.pos!==undefined)d.pos="De lado";else d.bpm=68}
+ if(a==="off"){d.on=false;DB.ev.unshift({p:d.user,t:Date.now(),m:"Dispositivo sin conexión"})}
+ if(a==="on"){d.on=true;d.ts=Date.now();DB.ev.unshift({p:d.user,t:Date.now(),m:"Dispositivo reconectado"})}
+ refresh(true)}
+
+/* ===== Sesión ===== */
+async function login(){const p=$("#pw").value;S.u=$("#us").value.trim();
+ if(!S.u||!p){S.err="Escriba su usuario y contraseña.";return render()}
+ try{const r=await api("POST","/api/auth/login",{username:S.u,password:p});S.tok=r.token;S.me=r.user;S.tab=r.user.role==="admin"?"dev":r.user.role==="medico"?"pac":"hoy";S.sel=null;audio=audio||new(window.AudioContext||window.webkitAudioContext)()}catch(e){}
+ render();refresh(true)}
+async function out(skip){if(!skip)try{await api("POST","/api/auth/logout")}catch(e){}
+ S.tok=S.me=S.lat=S.sel=null;buf.length=0;S.seq=0;S.sig="";render()}
+const pid=()=>S.me.role==="paciente"?S.me.id:S.sel;
+
+/* ===== Datos en vivo ===== */
+const mark=o=>JSON.stringify(o,(k,v)=>k==="ts"?undefined:v)+JSON.stringify([].concat(o).map(x=>x&&x.ts?fresh(x.ts):0));
+async function refresh(force){if(!S.me)return;let ch=force===true;
+ try{const r=S.me.role;
+  if(r==="admin"){if(S.tab==="dev"){const d=await api("GET","/api/devices");S.devs=d;if(S.list.length===0||force)S.list=await api("GET","/api/patients");const s=mark(d);ch=ch||s!==S.sig;S.sig=s}else{const a=await api("GET","/api/audit");const s=mark(a);ch=ch||s!==S.sig;S.sig=s;S.aud=a}}
+  else if(r==="medico"&&!S.sel){const l=await api("GET","/api/patients");const s=mark(l);ch=ch||s!==S.sig;S.sig=s;S.list=l}
+  else{const id=pid(),l=await api("GET","/api/patients/"+id+"/latest");const s=mark(l);ch=ch||s!==S.sig;S.sig=s;S.lat=l;
+   if(S.tab==="hist")S.hist=await api("GET","/api/patients/"+id+"/history");
+   if(l.st==="alerta")tone();else S.tone={n:0,t:0}}
+ }catch(e){ch=true}
+ if(ch)render();else document.querySelectorAll("[data-ago]").forEach(e=>e.textContent=Math.floor((Date.now()+S.skew-+e.dataset.ago)/1000))}
+async function poll(){if(!S.me||!S.lat||S.lat.tipo!=="pre"||S.tab!=="hoy")return;
+ try{const s=await api("GET","/api/patients/"+pid()+"/signal?since="+S.seq);
+  if(s.seq>S.seq){S.seq=s.seq;buf.push(...s.samples);while(buf.length>200)buf.shift();draw()}}catch(e){}}
+function draw(){const e=$("#ecg");if(e)e.setAttribute("points",buf.map((v,i)=>(i*3)+","+(65-45*v).toFixed(1)).join(" "))}
+function tone(){if(muted||!audio||S.me.role!=="paciente"||S.tone.n>=3||Date.now()-S.tone.t<15000)return;S.tone.n++;S.tone.t=Date.now();
+ [[392,0],[330,1.4]].forEach(([f,d])=>{const o=audio.createOscillator(),g=audio.createGain(),n=audio.currentTime+d;o.type="sine";o.frequency.value=f;
+  g.gain.setValueAtTime(0,n);g.gain.linearRampToValueAtTime(.05,n+.9);g.gain.linearRampToValueAtTime(0,n+2);o.connect(g).connect(audio.destination);o.start(n);o.stop(n+2.1)});
+ if(navigator.vibrate)navigator.vibrate([150,300,150])}
+async function ack(){try{await api("POST","/api/patients/"+pid()+"/alert/ack");S.tone={n:9,t:Date.now()}}catch(e){}refresh(true)}
+async function assign(dev,uid){try{await api("POST","/api/devices/"+dev+"/assign",{userId:+uid})}catch(e){}refresh(true)}
+
+/* ===== Interfaz ===== */
+function avatar(role,st,z){const c={paciente:"#6a5cf0",medico:"#0f9488",admin:"#d97706"}[role]||"#6a5cf0",f=st==="off"?"#9aa1b3":c;
+ const eyes=st==="sleep"?'<path d="M19 27q4 4 8 0M37 27q4 4 8 0" stroke="#fff" stroke-width="3" fill="none" stroke-linecap="round"/>':'<circle cx="23" cy="27" r="3.4" fill="#fff"/><circle cx="41" cy="27" r="3.4" fill="#fff"/>';
+ const mouth=st==="alert"?'<path d="M26 41h12" stroke="#fff" stroke-width="3" stroke-linecap="round"/>':st==="off"?'<path d="M27 42q5-3 10 0" stroke="#fff" stroke-width="3" fill="none" stroke-linecap="round"/>':'<path d="M25 38q7 7 14 0" stroke="#fff" stroke-width="3" fill="none" stroke-linecap="round"/>';
+ return `<svg viewBox="0 0 64 64" width="${z}" height="${z}" style="flex:none" role="img" aria-label="Avatar"><circle cx="32" cy="32" r="31" fill="${f}"/>${eyes}${mouth}${role==="medico"?'<path d="M32 50v8M28 54h8" stroke="#fff" stroke-width="3" stroke-linecap="round"/>':""}</svg>`}
+const avSt=l=>!l||!fresh(l.ts)?"off":l.st==="alerta"?"alert":"sleep";
+const conn=l=>fresh(l.ts)?'<span class="pill ok">● Recibiendo datos</span>':'<span class="pill of">○ Sin conexión</span>';
+const agoTx=l=>fresh(l.ts)?`Actualizado hace <span data-ago="${l.ts}">${Math.floor((Date.now()+S.skew-l.ts)/1000)}</span> s`:`Sin datos desde las ${hm(l.ts)}. Se muestra el último valor recibido.`;
+const tabs=a=>`<div class="tabs">${a.map(([k,t])=>`<button class="${S.tab===k?"on":""}" onclick="S.tab='${k}';S.sig='';render();refresh(true)">${t}</button>`).join("")}</div>`;
+
+function vPac(){const l=S.lat;if(!l)return'<div class="card">Cargando…</div>';const dx=l.tipo==="dx",on=fresh(l.ts),al=l.st==="alerta"&&on;
+ const name=S.me.role==="paciente"?S.me.name:(S.list.find(x=>x.id===S.sel)||{}).name;
+ const stx=!on?"Sin conexión":dx?(al?"Boca arriba":"Duerme de lado"):(al?"Posible pausa respiratoria":"Respiración regular");
+ const box=al?`<div class="alert" role="alert"><b>${dx?"Está boca arriba":"Pausa en la respiración"}</b>${dx?"Por favor, gírese suavemente hacia un lado.":"Respire con calma. Si se siente mal, avise a su cuidador."}<br>${S.me.role==="paciente"?`<button onclick="ack()">Entendido</button><button class="sec" onclick="muted=!muted;render()">${muted?"Activar sonido":"Silenciar sonido"}</button>`:""}</div>`:"";
+ const vis=dx?`<svg viewBox="0 0 300 100" role="img" aria-label="Posición: ${l.pos}"><rect x="8" y="58" width="284" height="36" rx="12" fill="none" stroke="var(--bd)" stroke-width="3"/><ellipse cx="${al?150:118}" cy="${al?46:52}" rx="${al?72:32}" ry="${al?18:26}" fill="${al?"var(--wnb)":"var(--okb)"}" stroke="${al?"var(--wn)":"var(--ok)"}" stroke-width="4"/></svg><p class="mut">Posición medida con el giroscopio. Se recomienda dormir de lado.</p>`
+ :`<svg viewBox="0 0 600 130" role="img" aria-label="Gráfica ECG"><line x1="0" y1="65" x2="600" y2="65" stroke="var(--bd)"/><polyline id="ecg" fill="none" stroke="var(--sig)" stroke-width="2.5"/><text x="4" y="124" fill="var(--mut)" font-size="13">Eje X: tiempo (4 s) · Eje Y: voltaje (mV)</text></svg><p><b>Frecuencia cardíaca calculada:</b> ${on?l.bpm:"—"} latidos/min <span class="mut">(calculada a partir de la señal)</span></p>`;
+ return `<div class="card hero"><div style="display:flex;gap:14px;align-items:center">${avatar("paciente",avSt(l),64)}<div><div class="mut">${l.deviceId} · ${dx?"Giroscopio + MAX1032":"ECG + MAX1032"}</div><h2 style="margin:0">${name||""}</h2></div></div>
+ <div class="st">${stx}</div>${conn(l)} <span class="tag">${l.source.toUpperCase()}</span><p class="mut" style="margin:.6em 0 0">${agoTx(l)}</p></div>${box}<div class="card"><h2>${dx?"Posición al dormir":"Señal del corazón (ECG)"}</h2>${vis}</div>`}
+
+function vHist(){const h=S.hist;if(!h)return'<div class="card">Cargando…</div>';const mx=Math.max(...h.nights,1);
+ const bars=h.nights.map((n,i)=>`<rect x="${12+i*40}" y="${90-n/mx*80}" width="26" height="${n/mx*80+1}" rx="6" fill="var(--pri)"/><text x="${25+i*40}" y="108" text-anchor="middle" font-size="12" fill="var(--mut)">${["L","M","M","J","V","S","D"][i]}</text><text x="${25+i*40}" y="${84-n/mx*80}" text-anchor="middle" font-size="12" fill="var(--tx)">${n}</text>`).join("");
+ return `<div class="card"><h2>Alertas por noche (última semana)</h2><svg viewBox="0 0 290 114" role="img" aria-label="Alertas por noche">${bars}</svg></div>
+ <div class="card"><h2>Eventos recientes</h2>${h.events.length?h.events.map(e=>`<p style="margin:.4em 0"><b>${hm(e.t)}</b> · ${e.m}</p>`).join(""):'<p class="mut">Aún no hay eventos.</p>'}</div>`}
+
+function vMed(){if(S.sel)return`<p><button class="sec" onclick="S.sel=null;S.lat=null;buf.length=0;S.seq=0;S.sig='';render();refresh(true)">← Mis pacientes</button></p>${tabs([["hoy","Hoy"],["hist","Historial"]])}`+(S.tab==="hist"?vHist():vPac());
+ return`<h2 style="margin-top:14px">Mis pacientes</h2>`+(S.list.map(p=>{const on=fresh(p.ts),st=!on?"off":p.st==="alerta"?"alert":"sleep";
+ return`<button class="row" onclick="S.sel=${p.id};S.tab='hoy';S.lat=null;buf.length=0;S.seq=0;S.sig='';render();refresh(true)">${avatar("paciente",st,52)}<div><b>${p.name}</b><br><span class="mut">${p.deviceId||"Sin dispositivo"} · ${p.tipo==="dx"?"Diagnosticado":"Pre-diagnóstico"}</span></div><span class="pill ${!on?"of":p.st==="alerta"?"wn":"ok"}">${!on?"Sin conexión":p.st==="alerta"?"Alerta":"Sin novedades"}</span></button>`}).join("")||'<div class="card">Sin pacientes asignados.</div>')}
+
+function vAdm(){if(S.tab==="aud")return`<div class="card"><h2>Auditoría</h2>${S.aud.map(a=>`<p style="margin:.4em 0"><b>${hm(a.t)}</b> · ${a.m}</p>`).join("")||'<p class="mut">Sin registros.</p>'}</div>`;
+ return`<div class="card"><h2>Dispositivos y asociación</h2><div class="wrap"><table><tr><th>Dispositivo</th><th>Usuario</th><th>Estado</th><th>Última recepción</th></tr>${S.devs.map(d=>`<tr><td>${d.id}<br><span class="mut">${d.sensor}</span></td><td><select aria-label="Usuario de ${d.id}" onchange="assign('${d.id}',this.value)" style="margin:0;min-height:48px">${S.list.map(p=>`<option value="${p.id}" ${p.id===d.user?"selected":""}>${p.name}</option>`).join("")}</select></td><td><span class="pill ${fresh(d.ts)?"ok":"of"}">${fresh(d.ts)?"Activo":"Sin datos"}</span></td><td>${d.ts?hm(d.ts):"—"}</td></tr>`).join("")}</table></div></div>`}
+
+function render(){const a=$("#app"),e=S.err?`<div class="err" role="alert">${S.err} <button class="sec" style="min-height:40px;padding:4px 14px" onclick="S.err='';refresh(true);render()">Reintentar</button></div>`:"";
+ if(!S.me){a.innerHTML=`<header>${avatar("paciente","sleep",56)}<div class="who"><b style="font-size:1.4rem">SueñoSeguro</b><div class="mut">Monitoreo del sueño</div></div></header>${e}
+ <div class="card"><h2>Iniciar sesión</h2><label for="us">Usuario</label><input id="us" autocomplete="username" value="${S.u}"><label for="pw">Contraseña</label><input id="pw" type="password" autocomplete="current-password" onkeydown="if(event.key==='Enter')login()"><button style="width:100%" onclick="login()">Entrar</button></div>
+ ${CFG.MODE==="mock"?'<p class="mut">Modo demostración con datos simulados. Cuentas de prueba: paciente1, paciente2, medico, admin (contraseña: demo).</p>':""}`;return}
+ const r=S.me.role,st=r==="paciente"?avSt(S.lat):"sleep";
+ const body=r==="paciente"?tabs([["hoy","Hoy"],["hist","Historial"]])+(S.tab==="hist"?vHist():vPac()):r==="medico"?vMed():tabs([["dev","Dispositivos"],["aud","Auditoría"]])+vAdm();
+ const simp=CFG.MODE==="mock"?`<details class="card"><summary>Simulación de dispositivos (solo pruebas)</summary><b>ESP32-A (ECG)</b><br><button onclick="sim('ESP32-A','alerta')">Pausa respiratoria</button><button class="sec" onclick="sim('ESP32-A','ok')">Normal</button><button class="sec" onclick="sim('ESP32-A','${DB.dev[0].on?"off":"on"}')">${DB.dev[0].on?"Desconectar":"Reconectar"}</button><br><b>ESP32-B (giroscopio)</b><br><button onclick="sim('ESP32-B','alerta')">Boca arriba</button><button class="sec" onclick="sim('ESP32-B','ok')">De lado</button><button class="sec" onclick="sim('ESP32-B','${DB.dev[1].on?"off":"on"}')">${DB.dev[1].on?"Desconectar":"Reconectar"}</button></details>`:"";
+ a.innerHTML=`<header>${avatar(r,st,52)}<div class="who"><b>${S.me.name}</b><div class="mut">${{paciente:"Paciente",medico:"Médico",admin:"Administrador"}[r]}</div></div><button class="sec" onclick="out()">Salir</button></header>${e}${body}${simp}`;draw()}
+setInterval(refresh,CFG.POLL_MS);setInterval(poll,1000);render();
+</script>
+</body>
+</html>
