@@ -1,0 +1,5 @@
+.env
+*.db
+esp32/config.py
+__pycache__/
+*.pyc

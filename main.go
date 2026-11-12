@@ -1,42 +1,89 @@
 package main
 
 import (
+	"bufio"
+	"log"
+	"os"
+	"strings"
+
 	"github.com/labstack/echo/v4"
 	"github.com/labstack/echo/v4/middleware"
 )
 
+// cargarEnv lee un archivo .env sencillo (CLAVE=valor) sin dependencias externas.
+func cargarEnv(ruta string) {
+	f, err := os.Open(ruta)
+	if err != nil {
+		return
+	}
+	defer f.Close()
+	sc := bufio.NewScanner(f)
+	for sc.Scan() {
+		l := strings.TrimSpace(sc.Text())
+		if l == "" || strings.HasPrefix(l, "#") {
+			continue
+		}
+		k, v, ok := strings.Cut(l, "=")
+		if !ok {
+			continue
+		}
+		k = strings.TrimSpace(k)
+		v = strings.Trim(strings.TrimSpace(v), "\"'")
+		if os.Getenv(k) == "" {
+			os.Setenv(k, v)
+		}
+	}
+}
+
+func exigirEnv(k string) string {
+	v := os.Getenv(k)
+	if v == "" {
+		log.Fatalf("Falta la variable %s. Copie .env.example como .env y complete los valores.", k)
+	}
+	return v
+}
+
 func main() {
-	// 1. Inicializar base de datos SQLite y semillas
+	cargarEnv(".env")
 	initDB()
 	defer db.Close()
-
-	// 2. Asignar el repositorio
 	repositorio = NuevoRepo(db)
 
-	e := echo.New()
+	origen := os.Getenv("CORS_ORIGIN")
+	if origen == "" {
+		origen = "*"
+	}
+	puerto := os.Getenv("PORT")
+	if puerto == "" {
+		puerto = "8084"
+	}
 
-	// Middlewares
+	e := echo.New()
 	e.Use(middleware.Recover())
 	e.Use(middleware.CORSWithConfig(middleware.CORSConfig{
-		AllowOrigins: []string{"*"},
-		AllowHeaders: []string{echo.HeaderOrigin, echo.HeaderContentType, echo.HeaderAccept, "X-Device-Token"},
+		AllowOrigins:  []string{origen},
+		AllowHeaders:  []string{echo.HeaderOrigin, echo.HeaderContentType, echo.HeaderAccept, echo.HeaderAuthorization, "X-Device-Token"},
+		ExposeHeaders: []string{"Date"},
 	}))
 
-	// Servir archivos estáticos del frontend
-	e.Static("/assets", "./assets")
+	// Frontend (misma dirección y puerto que la API: no hay problemas de CORS)
+	e.Static("/", "frontend")
 
-	// Vistas HTML
-	e.GET("/", HandlerIndex)
-	e.GET("/index.html", HandlerIndex)
-
-	// Endpoints de la API
+	// Sesión
 	e.POST("/api/auth/login", HandlerLogin)
-	e.GET("/api/pacientes", HandlerAPIPacientes)
-	e.POST("/api/telemetry", HandlerIngestionTelemetria)
-	e.GET("/api/devices/status", HandlerEstadoDispositivos)
-	e.GET("/api/patients/:id/history", HandlerHistorialPaciente)
-	e.GET("/api/admin/overview", HandlerAdminOverview)
+	e.POST("/api/auth/logout", HandlerLogout, RequireAuth)
 
-	// Iniciar servidor local
-	e.Logger.Fatal(e.Start("0.0.0.0:8084"))
+	// ESP32: credencial propia por dispositivo (no usa sesión de usuario)
+	e.POST("/api/telemetry", HandlerIngestionTelemetria, middleware.BodyLimit("16K"))
+
+	// Pantalla: todas exigen sesión y el servidor comprueba el permiso
+	e.GET("/api/patients", HandlerListaPacientes, RequireAuth)
+	e.GET("/api/patients/:id/latest", HandlerUltimo, RequireAuth)
+	e.GET("/api/patients/:id/history", HandlerHistorial, RequireAuth)
+	e.POST("/api/patients/:id/alert/ack", HandlerAck, RequireAuth)
+	e.GET("/api/devices", HandlerDispositivos, RequireAuth)
+	e.POST("/api/devices/:id/assign", HandlerAsignar, RequireAuth)
+	e.GET("/api/audit", HandlerAuditoria, RequireAuth)
+
+	e.Logger.Fatal(e.Start("0.0.0.0:" + puerto))
 }

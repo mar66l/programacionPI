@@ -1,9 +1,12 @@
 package main
 
 import (
+	"database/sql"
+	"errors"
+	"fmt"
 	"net/http"
-	"path/filepath"
 	"strconv"
+	"time"
 
 	"github.com/labstack/echo/v4"
 	"golang.org/x/crypto/bcrypt"
@@ -11,8 +14,34 @@ import (
 
 var repositorio *Repo
 
-func HandlerIndex(c echo.Context) error {
-	return c.File(filepath.Join("htmltmpl", "index.html"))
+var posturasValidas = map[string]bool{"": true, "boca_arriba": true, "boca_abajo": true, "izquierdo": true, "derecho": true}
+
+func jerr(c echo.Context, code int, msg string) error {
+	return c.JSON(code, map[string]string{"error": msg})
+}
+
+func corto(s string, n int) string {
+	r := []rune(s)
+	if len(r) > n {
+		return string(r[:n])
+	}
+	return s
+}
+
+// pacienteAutorizado valida el :id y el permiso EN EL SERVIDOR. Si devuelve false, ya respondió el error.
+func pacienteAutorizado(c echo.Context) (int, bool) {
+	id, err := strconv.Atoi(c.Param("id"))
+	if err != nil {
+		_ = jerr(c, http.StatusBadRequest, "ID de paciente inválido")
+		return 0, false
+	}
+	s := sesionDe(c)
+	if !puedeVerPaciente(s, id) {
+		repositorio.RegistrarAuditoria("ACCESO_DENEGADO", fmt.Sprintf("usuario %d pidió datos del paciente %d", s.UserID, id), c.RealIP())
+		_ = jerr(c, http.StatusForbidden, "Sin permiso")
+		return 0, false
+	}
+	return id, true
 }
 
 type LoginRequest struct {
@@ -20,128 +49,165 @@ type LoginRequest struct {
 	Password string `json:"password"`
 }
 
-// HandlerLogin valida credenciales con hash en el servidor y registra auditoría
 func HandlerLogin(c echo.Context) error {
 	var req LoginRequest
 	if err := c.Bind(&req); err != nil {
-		return c.JSON(http.StatusBadRequest, map[string]string{"error": "Formato de credenciales inválido"})
+		return jerr(c, http.StatusBadRequest, "Formato de credenciales inválido")
 	}
-
-	var idUser, idRol int
-	var nombre, hashGuardado, rolNombre string
-
-	query := `SELECT u.id, u.nombre, u.password_hash, u.id_rol, r.nombre 
-		FROM users u JOIN roles r ON u.id_rol = r.id WHERE u.email = ?`
-	err := db.QueryRow(query, req.Email).Scan(&idUser, &nombre, &hashGuardado, &idRol, &rolNombre)
-
-	if err != nil {
-		repositorio.RegistrarAuditoria("LOGIN_FALLIDO", "Email inexistente: "+req.Email, c.RealIP())
-		return c.JSON(http.StatusUnauthorized, map[string]string{"error": "Credenciales incorrectas"})
+	var idUser, pid int
+	var nombre, hashGuardado, rol, tipo string
+	err := db.QueryRow(`SELECT u.id, u.nombre, u.password_hash, r.nombre, COALESCE(u.id_paciente, 0), COALESCE(p.tipo, '')
+		FROM users u JOIN roles r ON u.id_rol = r.id
+		LEFT JOIN pacientes p ON p.id_paciente = u.id_paciente WHERE u.email = ?`, req.Email).
+		Scan(&idUser, &nombre, &hashGuardado, &rol, &pid, &tipo)
+	if err != nil || bcrypt.CompareHashAndPassword([]byte(hashGuardado), []byte(req.Password)) != nil {
+		repositorio.RegistrarAuditoria("LOGIN_FALLIDO", "Intento con correo: "+corto(req.Email, 60), c.RealIP())
+		return jerr(c, http.StatusUnauthorized, "Credenciales incorrectas")
 	}
-
-	if err := bcrypt.CompareHashAndPassword([]byte(hashGuardado), []byte(req.Password)); err != nil {
-		repositorio.RegistrarAuditoria("LOGIN_FALLIDO", "Password inválido: "+req.Email, c.RealIP())
-		return c.JSON(http.StatusUnauthorized, map[string]string{"error": "Credenciales incorrectas"})
-	}
-
-	repositorio.RegistrarAuditoria("LOGIN_EXITOSO", "Usuario: "+req.Email+" ("+rolNombre+")", c.RealIP())
-
+	tok := nuevoToken()
+	muSes.Lock()
+	sesiones[tok] = Sesion{UserID: idUser, Nombre: nombre, Rol: rol, IDPaciente: pid, Exp: time.Now().Add(8 * time.Hour)}
+	muSes.Unlock()
+	repositorio.RegistrarAuditoria("LOGIN_EXITOSO", "Usuario "+strconv.Itoa(idUser)+" ("+rol+")", c.RealIP())
 	return c.JSON(http.StatusOK, map[string]interface{}{
-		"id":     idUser,
-		"nombre": nombre,
-		"email":  req.Email,
-		"rol":    rolNombre,
+		"token": tok,
+		"user":  map[string]interface{}{"id": idUser, "name": nombre, "role": rol, "tipo": tipo, "pid": pid},
 	})
 }
 
-// HandlerIngestionTelemetria procesa los datos del ESP32 con validación técnica y de seguridad
+func HandlerLogout(c echo.Context) error {
+	s := sesionDe(c)
+	muSes.Lock()
+	delete(sesiones, c.Get("tok").(string))
+	muSes.Unlock()
+	repositorio.RegistrarAuditoria("LOGOUT", "Usuario "+strconv.Itoa(s.UserID)+" ("+s.Rol+")", c.RealIP())
+	return c.JSON(http.StatusOK, map[string]string{})
+}
+
+// HandlerIngestionTelemetria: datos del ESP32 con credencial propia y validación técnica.
 func HandlerIngestionTelemetria(c echo.Context) error {
 	token := c.Request().Header.Get("X-Device-Token")
 	if token == "" {
 		repositorio.RegistrarAuditoria("RECHAZO_TELEMETRIA", "Petición sin cabecera X-Device-Token", c.RealIP())
-		return c.JSON(http.StatusUnauthorized, map[string]string{"error": "Token de dispositivo ausente"})
+		return jerr(c, http.StatusUnauthorized, "Token de dispositivo ausente")
 	}
-
 	var data TelemetriaIn
 	if err := c.Bind(&data); err != nil {
-		return c.JSON(http.StatusBadRequest, map[string]string{"error": "Payload JSON corrupto o incompleto"})
+		return jerr(c, http.StatusBadRequest, "Payload JSON corrupto o incompleto")
 	}
-
-	// 1. Verificación de identidad y pertenencia del dispositivo
-	idPaciente, err := repositorio.ValidarTokenDispositivo(token, data.DeviceID)
+	idPaciente, tipo, err := repositorio.ValidarTokenDispositivo(token, data.DeviceID)
 	if err != nil {
-		repositorio.RegistrarAuditoria("TOKEN_NO_AUTORIZADO", "Dispositivo: "+data.DeviceID, c.RealIP())
-		return c.JSON(http.StatusForbidden, map[string]string{"error": "Dispositivo no autorizado para este paciente"})
+		repositorio.RegistrarAuditoria("TOKEN_NO_AUTORIZADO", "Dispositivo: "+corto(data.DeviceID, 40), c.RealIP())
+		return jerr(c, http.StatusUnauthorized, "Dispositivo no autorizado")
 	}
-
-	// 2. Validación de límites técnicos fisiológicos (Rechazo controlado)
-	if data.FingerDetected {
-		if data.SpO2 < 50.0 || data.SpO2 > 100.0 || data.BPM < 30.0 || data.BPM > 230.0 {
-			repositorio.RegistrarAuditoria("VALOR_ANOMALO", "Lectura fuera de rango para "+data.DeviceID, c.RealIP())
-			return c.JSON(http.StatusUnprocessableEntity, map[string]string{"error": "Valores biomédicos fuera de rango fisiológico"})
-		}
+	if !posturasValidas[data.Posture] {
+		repositorio.RegistrarAuditoria("VALOR_ANOMALO", "Postura inválida de "+data.DeviceID, c.RealIP())
+		return jerr(c, http.StatusUnprocessableEntity, "Postura no válida")
 	}
-
-	// 3. Persistencia de la telemetría
-	if err := repositorio.GuardarTelemetria(data, idPaciente); err != nil {
-		return c.JSON(http.StatusInternalServerError, map[string]string{"error": "Error interno al persistir telemetría"})
+	if data.FingerDetected && (data.SpO2 < 50 || data.SpO2 > 100 || data.BPM < 30 || data.BPM > 230) {
+		repositorio.RegistrarAuditoria("VALOR_ANOMALO", "Lectura fuera de rango de "+data.DeviceID, c.RealIP())
+		return jerr(c, http.StatusUnprocessableEntity, "Valores fuera de rango fisiológico")
 	}
-
-	return c.JSON(http.StatusOK, map[string]interface{}{
-		"status":      "ok",
-		"id_paciente": idPaciente,
-	})
+	st, err := repositorio.GuardarTelemetria(data, idPaciente, tipo)
+	if err != nil {
+		return jerr(c, http.StatusInternalServerError, "Error interno al guardar telemetría")
+	}
+	return c.JSON(http.StatusOK, map[string]interface{}{"status": "ok", "id_paciente": idPaciente, "st": st})
 }
 
-// HandlerEstadoDispositivos expone el watchdog de desconexión para la pantalla en vivo
-func HandlerEstadoDispositivos(c echo.Context) error {
-	estados, err := repositorio.EstadoDispositivos()
-	if err != nil {
-		return c.JSON(http.StatusInternalServerError, map[string]string{"error": err.Error()})
+func HandlerListaPacientes(c echo.Context) error {
+	if !soloRoles(c, "medico", "admin") {
+		return jerr(c, http.StatusForbidden, "Sin permiso")
 	}
-	return c.JSON(http.StatusOK, estados)
+	l, err := repositorio.ListarPacientes()
+	if err != nil {
+		return jerr(c, http.StatusInternalServerError, "Error interno")
+	}
+	return c.JSON(http.StatusOK, l)
 }
 
-// HandlerAPIPacientes lista los pacientes para el selector del médico
-func HandlerAPIPacientes(c echo.Context) error {
-	pacientes, err := repositorio.ListarPacientes()
-	if err != nil {
-		return c.JSON(http.StatusInternalServerError, map[string]string{"error": err.Error()})
+func HandlerUltimo(c echo.Context) error {
+	id, ok := pacienteAutorizado(c)
+	if !ok {
+		return nil
 	}
-	return c.JSON(http.StatusOK, pacientes)
+	d, err := repositorio.Ultimo(id)
+	if errors.Is(err, sql.ErrNoRows) {
+		return jerr(c, http.StatusNotFound, "Sin dispositivo o sin datos todavía")
+	}
+	if err != nil {
+		return jerr(c, http.StatusInternalServerError, "Error interno")
+	}
+	return c.JSON(http.StatusOK, d)
 }
 
-// HandlerHistorialPaciente entrega los registros cronológicos del paciente solicitado
-func HandlerHistorialPaciente(c echo.Context) error {
-	idStr := c.Param("id")
-	id, err := strconv.Atoi(idStr)
+func HandlerHistorial(c echo.Context) error {
+	id, ok := pacienteAutorizado(c)
+	if !ok {
+		return nil
+	}
+	h, err := repositorio.Historial(id)
 	if err != nil {
-		return c.JSON(http.StatusBadRequest, map[string]string{"error": "ID de paciente inválido"})
+		return jerr(c, http.StatusInternalServerError, "Error interno")
 	}
-
-	limiteStr := c.QueryParam("limit")
-	limite := 30
-	if limiteStr != "" {
-		if l, err := strconv.Atoi(limiteStr); err == nil && l > 0 {
-			limite = l
-		}
-	}
-
-	lecturas, err := repositorio.ObtenerUltimasLecturas(id, limite)
-	if err != nil {
-		return c.JSON(http.StatusInternalServerError, map[string]string{"error": err.Error()})
-	}
-	return c.JSON(http.StatusOK, lecturas)
+	return c.JSON(http.StatusOK, h)
 }
 
-// HandlerAdminOverview entrega el conteo de usuarios, credenciales hasheadas, sensores y tiempos de desconexión
-func HandlerAdminOverview(c echo.Context) error {
-	usuarios, err := repositorio.ObtenerResumenAdmin()
-	if err != nil {
-		return c.JSON(http.StatusInternalServerError, map[string]string{"error": err.Error()})
+func HandlerAck(c echo.Context) error {
+	id, ok := pacienteAutorizado(c)
+	if !ok {
+		return nil
 	}
-	return c.JSON(http.StatusOK, map[string]interface{}{
-		"total_usuarios": len(usuarios),
-		"usuarios":       usuarios,
-	})
+	if err := repositorio.AcusarAlerta(id); err != nil {
+		return jerr(c, http.StatusInternalServerError, "Error interno")
+	}
+	return c.JSON(http.StatusOK, map[string]string{})
+}
+
+func HandlerDispositivos(c echo.Context) error {
+	if !soloRoles(c, "admin") {
+		return jerr(c, http.StatusForbidden, "Sin permiso")
+	}
+	l, err := repositorio.Dispositivos()
+	if err != nil {
+		return jerr(c, http.StatusInternalServerError, "Error interno")
+	}
+	return c.JSON(http.StatusOK, l)
+}
+
+func HandlerAsignar(c echo.Context) error {
+	if !soloRoles(c, "admin") {
+		return jerr(c, http.StatusForbidden, "Sin permiso")
+	}
+	var b struct {
+		UserID int `json:"userId"`
+	}
+	if err := c.Bind(&b); err != nil || b.UserID <= 0 {
+		return jerr(c, http.StatusUnprocessableEntity, "Datos no válidos")
+	}
+	dev := c.Param("id")
+	err := repositorio.AsignarDispositivo(dev, b.UserID)
+	if errors.Is(err, ErrConflicto) {
+		return jerr(c, http.StatusConflict, "Ese paciente ya tiene otro dispositivo")
+	}
+	if errors.Is(err, ErrNoExiste) {
+		return jerr(c, http.StatusNotFound, "Dispositivo o paciente no existe")
+	}
+	if err != nil {
+		return jerr(c, http.StatusInternalServerError, "Error interno")
+	}
+	s := sesionDe(c)
+	repositorio.RegistrarAuditoria("ASOCIACION_CAMBIADA", fmt.Sprintf("%s -> paciente %d (por usuario %d)", dev, b.UserID, s.UserID), c.RealIP())
+	return c.JSON(http.StatusOK, map[string]string{})
+}
+
+func HandlerAuditoria(c echo.Context) error {
+	if !soloRoles(c, "admin") {
+		return jerr(c, http.StatusForbidden, "Sin permiso")
+	}
+	l, err := repositorio.ListarAuditoria()
+	if err != nil {
+		return jerr(c, http.StatusInternalServerError, "Error interno")
+	}
+	return c.JSON(http.StatusOK, l)
 }
