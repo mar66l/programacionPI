@@ -133,3 +133,15 @@ func HandlerHistorialPaciente(c echo.Context) error {
 	}
 	return c.JSON(http.StatusOK, lecturas)
 }
+
+// HandlerAdminOverview entrega el conteo de usuarios, credenciales hasheadas, sensores y tiempos de desconexión
+func HandlerAdminOverview(c echo.Context) error {
+	usuarios, err := repositorio.ObtenerResumenAdmin()
+	if err != nil {
+		return c.JSON(http.StatusInternalServerError, map[string]string{"error": err.Error()})
+	}
+	return c.JSON(http.StatusOK, map[string]interface{}{
+		"total_usuarios": len(usuarios),
+		"usuarios":       usuarios,
+	})
+}

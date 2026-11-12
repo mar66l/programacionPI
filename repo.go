@@ -26,14 +26,16 @@ type RegistroTelemetria struct {
 	FechaHora      string  `json:"fecha_hora"`
 }
 
-// DeviceStatus expone el estado de presencia de cada microcontrolador
+// DeviceStatus expone el estado de presencia, sensores y tiempo de desconexión de cada ESP32
 type DeviceStatus struct {
-	IDDispositivo  string `json:"id_dispositivo"`
-	IDPaciente     int    `json:"id_paciente"`
-	NombrePaciente string `json:"nombre_paciente"`
-	Estado         string `json:"estado"`
-	UltimaConexion string `json:"ultima_conexion"`
-	Activo         bool   `json:"activo"`
+	IDDispositivo    string `json:"id_dispositivo"`
+	IDPaciente       int    `json:"id_paciente"`
+	NombrePaciente   string `json:"nombre_paciente"`
+	Sensores         string `json:"sensores"`
+	Estado           string `json:"estado"`
+	UltimaConexion   string `json:"ultima_conexion"`
+	SegundosInactivo int    `json:"segundos_inactivo"`
+	Activo           bool   `json:"activo"`
 }
 
 // PacienteDTO información básica para el dashboard
@@ -42,6 +44,19 @@ type PacienteDTO struct {
 	Nombre      string `json:"nombre"`
 	Edad        int    `json:"edad"`
 	Diagnostico string `json:"diagnostico"`
+}
+
+// UsuarioAdminDTO representa cada fila del reporte técnico para el Administrador
+type UsuarioAdminDTO struct {
+	ID               int    `json:"id_usuario"`
+	Nombre           string `json:"nombre"`
+	Email            string `json:"email"`
+	PasswordHash     string `json:"password_hash"`
+	Rol              string `json:"rol"`
+	Dispositivo      string `json:"id_dispositivo"`
+	Sensores         string `json:"sensores"`
+	EstadoSensor     string `json:"estado_sensor"`
+	SegundosInactivo int    `json:"segundos_inactivo"`
 }
 
 type Repo struct {
@@ -142,10 +157,11 @@ func (r *Repo) ObtenerUltimasLecturas(idPaciente int, limit int) ([]RegistroTele
 	return lecturas, nil
 }
 
-// EstadoDispositivos evalúa la última conexión para determinar si la placa sigue viva o se desconectó
+// EstadoDispositivos evalúa la última conexión, los sensores y los segundos de inactividad (Watchdog)
 func (r *Repo) EstadoDispositivos() ([]DeviceStatus, error) {
-	query := `SELECT d.id_dispositivo, d.id_paciente, p.nombre, 
-		COALESCE(d.ultima_conexion, ''),
+	query := `SELECT d.id_dispositivo, d.id_paciente, p.nombre, d.sensores,
+		COALESCE(d.ultima_conexion, 'Sin conexión previa'),
+		COALESCE(CAST(strftime('%s', 'now') - strftime('%s', d.ultima_conexion) AS INTEGER), -1) AS seg_inactivo,
 		CASE 
 			WHEN d.ultima_conexion IS NOT NULL AND (strftime('%s', 'now') - strftime('%s', d.ultima_conexion)) <= 6 THEN 'conectado'
 			ELSE 'desconectado'
@@ -162,13 +178,47 @@ func (r *Repo) EstadoDispositivos() ([]DeviceStatus, error) {
 	var estados []DeviceStatus
 	for rows.Next() {
 		var st DeviceStatus
-		if err := rows.Scan(&st.IDDispositivo, &st.IDPaciente, &st.NombrePaciente, &st.UltimaConexion, &st.Estado); err != nil {
+		if err := rows.Scan(&st.IDDispositivo, &st.IDPaciente, &st.NombrePaciente, &st.Sensores, &st.UltimaConexion, &st.SegundosInactivo, &st.Estado); err != nil {
 			return nil, err
 		}
 		st.Activo = (st.Estado == "conectado")
 		estados = append(estados, st)
 	}
 	return estados, nil
+}
+
+// ObtenerResumenAdmin entrega al Administrador la lista de usuarios, hashes, sensores y tiempo de desconexión
+func (r *Repo) ObtenerResumenAdmin() ([]UsuarioAdminDTO, error) {
+	query := `SELECT u.id, u.nombre, u.email, u.password_hash, r.nombre AS rol,
+		COALESCE(d.id_dispositivo, 'N/A'),
+		COALESCE(d.sensores, 'Sin hardware asignado'),
+		CASE 
+			WHEN d.id_dispositivo IS NULL THEN 'no_aplica'
+			WHEN d.ultima_conexion IS NOT NULL AND (strftime('%s', 'now') - strftime('%s', d.ultima_conexion)) <= 6 THEN 'conectado'
+			ELSE 'desconectado'
+		END AS estado_sensor,
+		COALESCE(CAST(strftime('%s', 'now') - strftime('%s', d.ultima_conexion) AS INTEGER), -1) AS seg_inactivo
+		FROM users u
+		JOIN roles r ON u.id_rol = r.id
+		LEFT JOIN pacientes p ON u.nombre = p.nombre
+		LEFT JOIN devices d ON p.id_paciente = d.id_paciente
+		ORDER BY u.id ASC`
+
+	rows, err := r.db.Query(query)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var usuarios []UsuarioAdminDTO
+	for rows.Next() {
+		var u UsuarioAdminDTO
+		if err := rows.Scan(&u.ID, &u.Nombre, &u.Email, &u.PasswordHash, &u.Rol, &u.Dispositivo, &u.Sensores, &u.EstadoSensor, &u.SegundosInactivo); err != nil {
+			return nil, err
+		}
+		usuarios = append(usuarios, u)
+	}
+	return usuarios, nil
 }
 
 // RegistrarAuditoria guarda bitácora de eventos relevantes sin exponer contraseñas ni tokens

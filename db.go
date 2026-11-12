@@ -44,6 +44,7 @@ func initDB() {
 		id_dispositivo TEXT PRIMARY KEY,
 		api_token TEXT UNIQUE NOT NULL,
 		id_paciente INTEGER UNIQUE NOT NULL,
+		sensores TEXT NOT NULL,
 		estado TEXT DEFAULT 'desconectado',
 		ultima_conexion DATETIME,
 		FOREIGN KEY (id_paciente) REFERENCES pacientes(id_paciente)
@@ -77,9 +78,10 @@ func initDB() {
 	seedDatabase()
 }
 
-// seedDatabase precarga los roles, usuarios cifrados y la relación unívoca Paciente-Dispositivo
+// seedDatabase precarga los roles, usuarios cifrados y la relación unívoca Paciente-Dispositivo-Sensores
 func seedDatabase() {
-	db.Exec("INSERT OR IGNORE INTO roles (id, nombre) VALUES (1, 'medico'), (2, 'paciente');")
+	// Roles del sistema incluyendo el nuevo rol 'admin'
+	db.Exec("INSERT OR IGNORE INTO roles (id, nombre) VALUES (1, 'medico'), (2, 'paciente'), (3, 'admin');")
 
 	hashPassword := func(pwd string) string {
 		h, _ := bcrypt.GenerateFromPassword([]byte(pwd), bcrypt.DefaultCost)
@@ -96,6 +98,9 @@ func seedDatabase() {
 	db.Exec(`INSERT OR IGNORE INTO users (id, email, password_hash, nombre, id_rol) 
 		VALUES (3, 'pacienteB@redmedica.com', ?, 'Doña Elena Ramos', 2);`, hashPassword("pacienteB123"))
 
+	db.Exec(`INSERT OR IGNORE INTO users (id, email, password_hash, nombre, id_rol) 
+		VALUES (4, 'admin@redmedica.com', ?, 'Ing. Administrador', 3);`, hashPassword("admin2026"))
+
 	// 2. Pacientes clínicos
 	db.Exec(`INSERT OR IGNORE INTO pacientes (id_paciente, nombre, edad, diagnostico) 
 		VALUES (1, 'Don Roberto Gómez', 78, 'AOS Severa Posicional');`)
@@ -103,10 +108,10 @@ func seedDatabase() {
 	db.Exec(`INSERT OR IGNORE INTO pacientes (id_paciente, nombre, edad, diagnostico) 
 		VALUES (2, 'Doña Elena Ramos', 81, 'AOS Moderada con Desaturación');`)
 
-	// 3. Dispositivos asociados de forma independiente a cada paciente
-	db.Exec(`INSERT OR IGNORE INTO devices (id_dispositivo, api_token, id_paciente, estado) 
-		VALUES ('ESP32_A', 'token_esp32_paciente_a_2026', 1, 'desconectado');`)
+	// 3. Dispositivos asociados a cada paciente con su hardware específico
+	db.Exec(`INSERT OR IGNORE INTO devices (id_dispositivo, api_token, id_paciente, sensores, estado) 
+		VALUES ('ESP32_A', 'token_esp32_paciente_a_2026', 1, 'MAX30102 (Oxímetro) + AD8232 (ECG)', 'desconectado');`)
 
-	db.Exec(`INSERT OR IGNORE INTO devices (id_dispositivo, api_token, id_paciente, estado) 
-		VALUES ('ESP32_B', 'token_esp32_paciente_b_2026', 2, 'desconectado');`)
+	db.Exec(`INSERT OR IGNORE INTO devices (id_dispositivo, api_token, id_paciente, sensores, estado) 
+		VALUES ('ESP32_B', 'token_esp32_paciente_b_2026', 2, 'MAX30102 (Oxímetro) + MPU6050 (Giroscopio I2C)', 'desconectado');`)
 }

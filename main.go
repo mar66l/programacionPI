@@ -35,6 +35,7 @@ func main() {
 	e.POST("/api/telemetry", HandlerIngestionTelemetria)
 	e.GET("/api/devices/status", HandlerEstadoDispositivos)
 	e.GET("/api/patients/:id/history", HandlerHistorialPaciente)
+	e.GET("/api/admin/overview", HandlerAdminOverview)
 
 	// Iniciar servidor local
 	e.Logger.Fatal(e.Start("0.0.0.0:8084"))
